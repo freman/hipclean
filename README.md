@@ -12,9 +12,9 @@ none
 
 installation
 -
-cd $GOPATH
-go get github.com/freman/hipclean
+	cd $GOPATH
+	go get github.com/freman/hipclean
 
 execution
 -
-./bin/hipclean
+	./bin/hipclean
