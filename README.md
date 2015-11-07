@@ -9,3 +9,12 @@ none
 known issues
 -
 none
+
+installation
+-
+cd $GOPATH
+go get github.com/freman/hipclean
+
+execution
+-
+./bin/hipclean
