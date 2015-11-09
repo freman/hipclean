@@ -16,6 +16,8 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
+var nullTime = time.Unix(0, 0)
+
 var terminalState *terminal.State
 
 func maxInt(a, b int) int {

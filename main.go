@@ -41,14 +41,17 @@ func getCredentials() (string, string) {
 	return strings.TrimSpace(username), strings.TrimSpace(string(password))
 }
 
-func promptPeople(limit int) []int {
-	fmt.Print("Select users [eg: 1,3,5..12]: ")
+func promptPeople(limit int) []interface{} {
+	fmt.Println("Enter one or more users to delete, if you know the ID of a user that doesn't appear on the above list you can enter it by prefixing a hash(#)")
+	fmt.Print("Select users [eg: 1,3,5..12,#12345672]: ")
 	reader := bufio.NewReader(os.Stdin)
 	stringList, _ := reader.ReadString('\n')
 
-	list := make([]int, 0)
+	list := make([]interface{}, 0)
 	for _, entry := range strings.Split(stringList, ",") {
-		if strings.Contains(entry, "..") {
+		if strings.HasPrefix(entry, "#") {
+			list = append(list, strings.TrimPrefix(entry, "#"))
+		} else if strings.Contains(entry, "..") {
 			indexRange := strings.Split(entry, "..")
 
 			if len(indexRange) != 2 {
@@ -83,6 +86,27 @@ func promptPeople(limit int) []int {
 	return list
 }
 
+func extractProfileMetadata(gq *goquery.Document) (string, time.Time, error) {
+	uid, ok := gq.Find("meta[name=uid]").Attr("content")
+	if !ok {
+		log.Println("Can't find uid, there might be something wrong")
+	}
+
+	var err error
+	var created time.Time
+	screated, ok := gq.Find("meta[name=ucreated]").Attr("content")
+	if !ok {
+		return "", nullTime, fmt.Errorf("Error reading account creation date")
+	} else {
+		created, err = time.Parse("2006-01-02 15:04:05", screated)
+		if err != nil {
+			return "", nullTime, err
+		}
+	}
+
+	return uid, created, nil
+}
+
 func main() {
 	user, pass := getCredentials()
 
@@ -112,26 +136,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	gq = mustParseResponse(resp)
 
+	gq = mustParseResponse(resp)
 	if gq.Find("div.aui-page-header-main h1").Size() != 1 {
 		log.Fatal("Couldn't find welcome header")
 	}
 
-	uid, ok := gq.Find("meta[name=uid]").Attr("content")
-	if !ok {
-		log.Println("Can't find your uid, there might be something wrong")
-	}
-
-	var created time.Time
-	screated, ok := gq.Find("meta[name=ucreated]").Attr("content")
-	if !ok {
-		log.Fatal("Error reading your account creation date")
-	} else {
-		created, err = time.Parse("2006-01-02 15:04:05", screated)
-		if err != nil {
-			log.Fatal(err)
-		}
+	uid, created, err := extractProfileMetadata(gq)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	log.Printf("Found user %s created %s", uid, created)
@@ -210,20 +223,58 @@ func main() {
 	historiesToDelete := promptPeople(len(people))
 
 	for _, index := range historiesToDelete {
-		person := people[index]
+		var currentPerson person
+		switch t := index.(type) {
+		case int:
+			currentPerson = people[t]
+		case string:
+			log.Printf("Resolving %s to a user", t)
+			err = func() error {
+				resp, err = client.Get("https://" + domain + "/people/show/" + t)
+				if err != nil {
+					return fmt.Errorf("Can't lookup %s: %s", t, err)
+				}
+
+				gq, err := goquery.NewDocumentFromResponse(resp)
+				if err != nil {
+					return fmt.Errorf("Can't parse %s: %s", t, err)
+				}
+
+				name := gq.Find("div.aui-item h2").Text()
+				if name == "" {
+					return fmt.Errorf("Can't find name for %s", t)
+				}
+
+				_, joined, err := extractProfileMetadata(gq)
+				if err != nil {
+					return err
+				}
+
+				currentPerson = person{
+					Name:   name,
+					Joined: joined,
+					ID:     t,
+				}
+				return nil
+			}()
+			if err != nil {
+				log.Printf("ERR: %s", err)
+				continue
+			}
+		}
 		endDate := created.Add(-1 * 24 * time.Hour)
-		if endDate.Before(person.Joined) {
-			endDate = person.Joined
+		if endDate.Before(currentPerson.Joined) {
+			endDate = currentPerson.Joined
 		}
 
 		for working := time.Now(); working.After(endDate); working = working.Add(-1 * 24 * time.Hour) {
-			log.Printf("Checking %s @ %s", person.Name, working.Format("2006-01-02"))
+			log.Printf("Checking %s @ %s", currentPerson.Name, working.Format("2006-01-02"))
 
 			err := try.Do(func(attempt int) (bool, error) {
 				if attempt > 1 {
 					time.Sleep(retryInterval * time.Duration(attempt-1) * time.Second)
 				}
-				resp, err = client.Get("https://" + domain + "/history/member/" + person.ID + working.Format("/2006/01/02"))
+				resp, err = client.Get("https://" + domain + "/history/member/" + currentPerson.ID + working.Format("/2006/01/02"))
 				if err != nil {
 					return attempt < retryLimit, err
 				}
