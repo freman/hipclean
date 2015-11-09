@@ -50,7 +50,7 @@ func promptPeople(limit int) []interface{} {
 	list := make([]interface{}, 0)
 	for _, entry := range strings.Split(stringList, ",") {
 		if strings.HasPrefix(entry, "#") {
-			list = append(list, strings.TrimPrefix(entry, "#"))
+			list = append(list, strings.TrimSpace(strings.TrimPrefix(entry, "#")))
 		} else if strings.Contains(entry, "..") {
 			indexRange := strings.Split(entry, "..")
 
